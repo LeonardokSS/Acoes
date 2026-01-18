@@ -1,142 +1,144 @@
 import requests
-import time
 
 # ========================================================
-# CONFIG"URAÇÕES
+# CONFIGURAÇÕES
 # ========================================================
 TELEGRAM_TOKEN = "7974684858:AAFeU_cb0_kyijadOBMPSZKamALFoyBPQXg"
 CHAT_ID = "6632450212"
-ALPHAVANTAGE_KEY = "AZGZNM5OXWQIHOCG"
+ALPHAVANTAGE_KEY = "GCO1FWP5JPST77V4"
 
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
+TIMEOUT = 8
 
 
 # ========================================================
-# FUNÇÃO: PEGAR PREÇO NO YAHOO FINANCE
+# YAHOO FINANCE
 # ========================================================
 def pegar_yahoo(simbolo):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{simbolo}?interval=1m"
 
     try:
-        resp = session.get(url, timeout=8)
-        resp.raise_for_status()
-        data = resp.json()
+        r = session.get(url, timeout=TIMEOUT)
+        r.raise_for_status()
+        result = r.json()["chart"]["result"]
 
-        result = data["chart"]["result"]
         if not result:
             return None
 
         meta = result[0]["meta"]
+        atual = meta.get("regularMarketPrice")
+        anterior = meta.get("chartPreviousClose")
 
-        preco_atual = meta.get("regularMarketPrice")
-        preco_anterior = meta.get("chartPreviousClose")
-
-        if preco_atual is None or preco_anterior is None:
+        if atual is None or anterior is None:
             return None
 
-        variacao = preco_atual - preco_anterior
-        variacao_percent = (variacao / preco_anterior) * 100
+        return montar_dados(
+            simbolo,
+            atual,
+            anterior,
+            meta.get("currency", "N/A"),
+            meta.get("exchangeName", "N/A")
+        )
 
-        return {
-            "simbolo": simbolo,
-            "preco_atual": preco_atual,
-            "preco_anterior": preco_anterior,
-            "variacao": variacao,
-            "variacao_percent": variacao_percent,
-            "moeda": meta.get("currency", "N/A"),
-            "exchange": meta.get("exchangeName", "N/A")
-        }
-
-    except:
+    except (requests.RequestException, KeyError, ValueError):
         return None
 
 
 # ========================================================
-# FUNÇÃO: PEGAR PREÇO NO ALPHAVANTAGE
+# ALPHA VANTAGE
 # ========================================================
 def pegar_alpha(simbolo):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={simbolo}&apikey={ALPHAVANTAGE_KEY}"
+    url = (
+        "https://www.alphavantage.co/query"
+        f"?function=GLOBAL_QUOTE&symbol={simbolo}&apikey={ALPHAVANTAGE_KEY}"
+    )
 
     try:
-        resp = session.get(url, timeout=8)
-        resp.raise_for_status()
-        data = resp.json()
+        r = session.get(url, timeout=TIMEOUT)
+        r.raise_for_status()
+        q = r.json().get("Global Quote")
 
-        q = data.get("Global Quote")
         if not q:
             return None
 
-        preco_atual = float(q.get("05. price", 0))
-        preco_anterior = float(q.get("08. previous close", 0))
+        atual = float(q["05. price"])
+        anterior = float(q["08. previous close"])
 
-        variacao = preco_atual - preco_anterior
-        variacao_percent = (variacao / preco_anterior) * 100 if preco_anterior else 0
+        return montar_dados(simbolo, atual, anterior)
 
-        return {
-            "simbolo": simbolo,
-            "preco_atual": preco_atual,
-            "preco_anterior": preco_anterior,
-            "variacao": variacao,
-            "variacao_percent": variacao_percent
-        }
-
-    except:
+    except (requests.RequestException, KeyError, ValueError):
         return None
 
 
 # ========================================================
-# ENVIAR TEXTO PARA TELEGRAM
+# FUNÇÃO AUXILIAR
+# ========================================================
+def montar_dados(simbolo, atual, anterior, moeda="USD", exchange="N/A"):
+    variacao = atual - anterior
+    variacao_percent = (variacao / anterior) * 100 if anterior else 0
+
+    return {
+        "simbolo": simbolo,
+        "preco_atual": atual,
+        "preco_anterior": anterior,
+        "variacao": variacao,
+        "variacao_percent": variacao_percent,
+        "moeda": moeda,
+        "exchange": exchange
+    }
+
+
+# ========================================================
+# TELEGRAM
 # ========================================================
 def telegram_enviar(texto):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": texto})
+    session.post(
+        url,
+        json={
+            "chat_id": CHAT_ID,
+            "text": texto,
+            "parse_mode": "Markdown"
+        },
+        timeout=TIMEOUT
+    )
 
 
 # ========================================================
-# FUNÇÃO PRINCIPAL
+# RELATÓRIO
 # ========================================================
 def enviar_relatorio(simbolos_yahoo, simbolos_alpha):
+    linhas = ["📊 *Relatório de Ações*\n"]
 
-    linhas = []
-
-    linhas.append("📊 *Relatório de Ações*\n")
-
-    # Yahoo
     for s in simbolos_yahoo:
         d = pegar_yahoo(s)
-        if d:
-            linhas.append(
-                f"▶ {d['simbolo']} ({d['moeda']})\n"
-                f"Preço atual: {d['preco_atual']}\n"
-                f"Anterior: {d['preco_anterior']}\n"
-                f"Variação: {d['variacao']:.2f} ({d['variacao_percent']:.2f}%)\n"
-            )
-        else:
-            linhas.append(f"▶ {s}: erro ao buscar no Yahoo.\n")
+        linhas.append(formatar_linha(d, fonte="Yahoo"))
 
-    # AlphaVantage
     for s in simbolos_alpha:
         d = pegar_alpha(s)
-        if d:
-            linhas.append(
-                f"◆ {d['simbolo']} (Alpha)\n"
-                f"Preço atual: {d['preco_atual']}\n"
-                f"Anterior: {d['preco_anterior']}\n"
-                f"Variação: {d['variacao']:.2f} ({d['variacao_percent']:.2f}%)\n"
-            )
-        else:
-            linhas.append(f"◆ {s}: erro ao buscar no AlphaVantage.\n")
+        linhas.append(formatar_linha(d, fonte="Alpha"))
 
-    texto = "\n".join(linhas)
-    telegram_enviar(texto)
+    telegram_enviar("\n".join(linhas))
+
+
+def formatar_linha(dados, fonte):
+    if not dados:
+        return f"❌ Erro ao buscar dados ({fonte})\n"
+
+    return (
+        f"▶ *{dados['simbolo']}* ({fonte})\n"
+        f"Preço: {dados['preco_atual']}\n"
+        f"Anterior: {dados['preco_anterior']}\n"
+        f"Variação: {dados['variacao']:.2f} ({dados['variacao_percent']:.2f}%)\n"
+    )
 
 
 # ========================================================
-# EXEMPLO DE USO
+# EXECUÇÃO
 # ========================================================
 if __name__ == "__main__":
     enviar_relatorio(
-        simbolos_yahoo=["ITUB4.SA", "BBAS3.SA", "BBSE3.SA","WEGE3"],
-        simbolos_alpha=["IBM", "AMD","NVDA","MSFT"]
+        simbolos_yahoo=["ITUB4.SA", "BBAS3.SA", "BBSE3.SA", "WEGE3.SA"],
+        simbolos_alpha=["IBM", "AMD", "NVDA", "MSFT"]
     )
