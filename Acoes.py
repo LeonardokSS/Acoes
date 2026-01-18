@@ -1,11 +1,11 @@
 import requests
-
+import time
 # ========================================================
 # CONFIGURAÇÕES
 # ========================================================
 TELEGRAM_TOKEN = "7974684858:AAFeU_cb0_kyijadOBMPSZKamALFoyBPQXg"
 CHAT_ID = "6632450212"
-ALPHAVANTAGE_KEY = "GCO1FWP5JPST77V4"
+
 
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -45,30 +45,7 @@ def pegar_yahoo(simbolo):
         return None
 
 
-# ========================================================
-# ALPHA VANTAGE
-# ========================================================
-def pegar_alpha(simbolo):
-    url = (
-        "https://www.alphavantage.co/query"
-        f"?function=GLOBAL_QUOTE&symbol={simbolo}&apikey={ALPHAVANTAGE_KEY}"
-    )
 
-    try:
-        r = session.get(url, timeout=TIMEOUT)
-        r.raise_for_status()
-        q = r.json().get("Global Quote")
-
-        if not q:
-            return None
-
-        atual = float(q["05. price"])
-        anterior = float(q["08. previous close"])
-
-        return montar_dados(simbolo, atual, anterior)
-
-    except (requests.RequestException, KeyError, ValueError):
-        return None
 
 
 # ========================================================
@@ -108,16 +85,12 @@ def telegram_enviar(texto):
 # ========================================================
 # RELATÓRIO
 # ========================================================
-def enviar_relatorio(simbolos_yahoo, simbolos_alpha):
+def enviar_relatorio(simbolos_yahoo):
     linhas = ["📊 *Relatório de Ações*\n"]
 
     for s in simbolos_yahoo:
         d = pegar_yahoo(s)
         linhas.append(formatar_linha(d, fonte="Yahoo"))
-
-    for s in simbolos_alpha:
-        d = pegar_alpha(s)
-        linhas.append(formatar_linha(d, fonte="Alpha"))
 
     telegram_enviar("\n".join(linhas))
 
@@ -139,6 +112,7 @@ def formatar_linha(dados, fonte):
 # ========================================================
 if __name__ == "__main__":
     enviar_relatorio(
-        simbolos_yahoo=["ITUB4.SA", "BBAS3.SA", "BBSE3.SA", "WEGE3.SA"],
-        simbolos_alpha=["IBM", "AMD", "NVDA", "MSFT"]
+        simbolos_yahoo = [
+    "ITUB4.SA", "BBAS3.SA", "BBSE3.SA", "WEGE3.SA",
+    "AAPL", "MSFT", "NVDA", "AMD", "IBM"]
     )
